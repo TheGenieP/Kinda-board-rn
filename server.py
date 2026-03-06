@@ -481,7 +481,12 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
 
 
 @app.post("/api/channel-latest")
-async def get_channel_latest_videos(channel_url: str = Form(...), session: str = Cookie(None)):
+async def get_channel_latest_videos(
+    channel_url: str = Form(...),
+    limit: int = Form(10),
+    offset: int = Form(0),
+    session: str = Cookie(None)
+):
     if not check_auth(session):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
@@ -495,10 +500,15 @@ async def get_channel_latest_videos(channel_url: str = Form(...), session: str =
     if "/videos" not in normalized_url:
         normalized_url = normalized_url.rstrip("/") + "/videos"
 
+    # Keep queries bounded so users can progressively load more without huge requests
+    safe_limit = max(1, min(limit, 25))
+    safe_offset = max(0, offset)
+
     opts = {
         "extract_flat": True,
         "skip_download": True,
-        "playlistend": 10,
+        "playliststart": safe_offset + 1,
+        "playlistend": safe_offset + safe_limit,
         "quiet": True,
         "no_warnings": True,
     }
@@ -509,7 +519,7 @@ async def get_channel_latest_videos(channel_url: str = Form(...), session: str =
 
         entries = info.get("entries", []) if info else []
         videos = []
-        for entry in entries[:10]:
+        for entry in entries:
             video_id = entry.get("id")
             if not video_id:
                 continue
@@ -518,11 +528,16 @@ async def get_channel_latest_videos(channel_url: str = Form(...), session: str =
                 "title": entry.get("title", "Untitled"),
                 "url": f"https://www.youtube.com/watch?v={video_id}",
                 "published": entry.get("upload_date"),
+                "id": video_id,
             })
 
         return JSONResponse({
             "channel": info.get("uploader") if info else None,
             "videos": videos,
+            "offset": safe_offset,
+            "limit": safe_limit,
+            "has_more": len(videos) == safe_limit,
+            "next_offset": safe_offset + len(videos),
         })
     except Exception as e:
         return JSONResponse({"error": f"Failed to fetch channel videos: {str(e)}"}, status_code=500)

@@ -419,6 +419,21 @@ textarea {
     padding: 10px 14px;
     margin-bottom: 8px;
     font-size: 0.95rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.channel-item-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.channel-item-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .channel-item a {
@@ -493,6 +508,11 @@ textarea {
         margin-bottom: 20px;
         width: 100%;
     }
+
+    .channel-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
 }
 </style>
 </head>
@@ -555,9 +575,10 @@ textarea {
                 <label for="channelUrl">📺 YouTube Channel URL</label>
                 <input id="channelUrl" placeholder="https://www.youtube.com/@channelname" autocomplete="off">
             </div>
-            <button onclick="fetchChannelLatest()" class="btn btn-primary">📋 Get Latest 10 Videos</button>
+            <button onclick="fetchChannelLatest()" class="btn btn-primary">📋 Get Latest Videos</button>
             <p id="channelStatus"></p>
             <div id="channelResults" class="channel-results"></div>
+            <button id="channelLoadMore" onclick="loadMoreChannelVideos()" class="btn btn-secondary" style="display:none; margin-top: 10px;">➕ Show More</button>
         </div>
     </div>
 
@@ -583,6 +604,9 @@ textarea {
 <script>
 let currentVideoFile = null;
 let downloadHistory = [];
+let currentChannelUrl = '';
+let channelOffset = 0;
+const channelPageSize = 10;
 
 // Load history from server
 async function loadHistory() {
@@ -671,21 +695,54 @@ function formatPublished(uploadDate) {
     return `${year}-${month}-${day}`;
 }
 
-async function fetchChannelLatest() {
-    const channelUrl = document.getElementById('channelUrl').value.trim();
+function renderChannelVideos(videos, append = false) {
+    const channelResults = document.getElementById('channelResults');
+    const startIndex = append ? channelResults.children.length : 0;
+
+    const html = videos.map((video, index) => `
+        <div class="channel-item">
+            <div class="channel-item-main">
+                <strong>${startIndex + index + 1}.</strong>
+                <a href="${video.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.title)}</a>
+                <span style="color: var(--text-muted);"> • ${formatPublished(video.published)}</span>
+            </div>
+            <div class="channel-item-actions">
+                <button onclick="downloadChannelVideo('${video.url}')" class="btn-secondary btn-small">⬇️ Download</button>
+            </div>
+        </div>
+    `).join('');
+
+    if (append) {
+        channelResults.insertAdjacentHTML('beforeend', html);
+    } else {
+        channelResults.innerHTML = html;
+    }
+}
+
+async function fetchChannelLatest(append = false) {
+    const channelInput = document.getElementById('channelUrl');
+    const channelUrl = channelInput.value.trim();
     const channelStatus = document.getElementById('channelStatus');
     const channelResults = document.getElementById('channelResults');
+    const loadMoreBtn = document.getElementById('channelLoadMore');
 
     if (!channelUrl) {
         channelStatus.textContent = 'Please enter a channel URL.';
         return;
     }
 
-    channelStatus.textContent = 'Fetching latest videos...';
-    channelResults.innerHTML = '';
+    if (!append || channelUrl !== currentChannelUrl) {
+        currentChannelUrl = channelUrl;
+        channelOffset = 0;
+        channelResults.innerHTML = '';
+    }
+
+    channelStatus.textContent = append ? 'Loading more videos...' : 'Fetching latest videos...';
 
     const form = new FormData();
-    form.append('channel_url', channelUrl);
+    form.append('channel_url', currentChannelUrl);
+    form.append('limit', channelPageSize);
+    form.append('offset', channelOffset);
 
     try {
         const res = await fetch('/api/channel-latest', {
@@ -700,25 +757,67 @@ async function fetchChannelLatest() {
                 return;
             }
             channelStatus.textContent = data.error;
+            loadMoreBtn.style.display = 'none';
             return;
         }
 
         const videos = data.videos || [];
-        if (!videos.length) {
+        if (!videos.length && channelOffset === 0) {
             channelStatus.textContent = 'No videos found for this channel.';
+            loadMoreBtn.style.display = 'none';
             return;
         }
 
-        channelStatus.textContent = `${data.channel || 'Channel'} latest videos:`;
-        channelResults.innerHTML = videos.map((video, index) => `
-            <div class="channel-item">
-                <strong>${index + 1}.</strong>
-                <a href="${video.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.title)}</a>
-                <span style="color: var(--text-muted);"> • ${formatPublished(video.published)}</span>
-            </div>
-        `).join('');
+        if (videos.length) {
+            renderChannelVideos(videos, channelOffset > 0);
+            channelOffset = data.next_offset || (channelOffset + videos.length);
+        }
+
+        channelStatus.textContent = `${data.channel || 'Channel'} videos loaded: ${channelOffset}`;
+        loadMoreBtn.style.display = data.has_more ? 'inline-flex' : 'none';
     } catch (err) {
         channelStatus.textContent = `Failed to fetch videos: ${err.message}`;
+        loadMoreBtn.style.display = 'none';
+    }
+}
+
+async function loadMoreChannelVideos() {
+    await fetchChannelLatest(true);
+}
+
+async function downloadChannelVideo(videoUrl) {
+    const status = document.getElementById('channelStatus');
+    const cookies = document.getElementById('cookies').value;
+    const format = document.getElementById('format').value;
+
+    status.textContent = 'Starting download...';
+
+    const form = new FormData();
+    form.append('url', videoUrl);
+    form.append('cookies', cookies);
+    form.append('format', format);
+
+    try {
+        const res = await fetch('/api/download', {
+            method: 'POST',
+            body: form
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            if (data.error === 'Unauthorized') {
+                window.location.href = '/';
+                return;
+            }
+            status.textContent = `Download failed: ${data.error}`;
+            return;
+        }
+
+        status.textContent = 'Download ready. Starting file download...';
+        window.location.href = data.file;
+        await loadHistory();
+    } catch (err) {
+        status.textContent = `Download failed: ${err.message}`;
     }
 }
 
