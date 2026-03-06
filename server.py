@@ -458,20 +458,38 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
 
                 return None, last_error, payment_required
 
-            webshare_proxies = get_webshare_proxies()
-            filename, last_webshare_error, webshare_payment_required = try_download_with_proxies(webshare_proxies, "Webshare")
-            if filename:
-                return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
+            # You can prioritize free proxies with PREFER_FREE_PROXIES=true
+            prefer_free_proxies = os.getenv("PREFER_FREE_PROXIES", "false").lower() in ["1", "true", "yes"]
 
-            # Fallback to free proxies if Webshare fails (or if not configured)
+            webshare_proxies = get_webshare_proxies()
             free_proxies = get_free_proxies()
-            filename, last_free_error, _ = try_download_with_proxies(free_proxies, "free")
-            if filename:
-                return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
+
+            last_webshare_error = None
+            last_free_error = None
+            webshare_payment_required = False
+
+            proxy_plan = [
+                ("free", free_proxies),
+                ("Webshare", webshare_proxies),
+            ] if prefer_free_proxies else [
+                ("Webshare", webshare_proxies),
+                ("free", free_proxies),
+            ]
+
+            for label, proxy_list in proxy_plan:
+                filename, last_error, payment_required = try_download_with_proxies(proxy_list, label)
+                if filename:
+                    return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
+
+                if label == "Webshare":
+                    last_webshare_error = last_error
+                    webshare_payment_required = payment_required
+                else:
+                    last_free_error = last_error
 
             if webshare_payment_required:
                 return JSONResponse({
-                    "error": "YouTube blocked and Webshare returned 402 Payment Required. Please top up your Webshare plan or remove WEBSHARE_API_KEY to skip paid proxies, then retry with cookies for best reliability."
+                    "error": "YouTube blocked and Webshare returned 402 Payment Required. Tip: set PREFER_FREE_PROXIES=true to try free proxies first, or remove WEBSHARE_API_KEY to skip paid proxies, then retry with cookies for best reliability."
                 }, status_code=500)
 
             if webshare_proxies:
