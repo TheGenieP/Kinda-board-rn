@@ -398,6 +398,39 @@ textarea {
     color: var(--text-muted);
 }
 
+.channel-tool {
+    margin-top: 30px;
+    padding-top: 25px;
+    border-top: 1px solid var(--border);
+}
+
+.channel-results {
+    margin-top: 15px;
+    text-align: left;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.channel-item {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    font-size: 0.95rem;
+}
+
+.channel-item a {
+    color: #fff;
+    text-decoration: none;
+}
+
+.channel-item a:hover {
+    text-decoration: underline;
+    color: var(--primary);
+}
+
 .info-box a {
     color: var(--primary);
     text-decoration: none;
@@ -516,6 +549,16 @@ textarea {
             💡 <strong>Pro Tip:</strong> Cookies are optional! We automatically fallback to Invidious for YouTube.<br>
             <a href="https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp" target="_blank">Learn how to export cookies →</a>
         </div>
+
+        <div class="channel-tool">
+            <div class="input-group">
+                <label for="channelUrl">📺 YouTube Channel URL</label>
+                <input id="channelUrl" placeholder="https://www.youtube.com/@channelname" autocomplete="off">
+            </div>
+            <button onclick="fetchChannelLatest()" class="btn btn-primary">📋 Get Latest 10 Videos</button>
+            <p id="channelStatus"></p>
+            <div id="channelResults" class="channel-results"></div>
+        </div>
     </div>
 
     <div id="videoPlayer">
@@ -618,6 +661,65 @@ function truncateUrl(url) {
         return url.substring(0, 57) + '...';
     }
     return url;
+}
+
+function formatPublished(uploadDate) {
+    if (!uploadDate || uploadDate.length !== 8) return 'Unknown date';
+    const year = uploadDate.slice(0, 4);
+    const month = uploadDate.slice(4, 6);
+    const day = uploadDate.slice(6, 8);
+    return `${year}-${month}-${day}`;
+}
+
+async function fetchChannelLatest() {
+    const channelUrl = document.getElementById('channelUrl').value.trim();
+    const channelStatus = document.getElementById('channelStatus');
+    const channelResults = document.getElementById('channelResults');
+
+    if (!channelUrl) {
+        channelStatus.textContent = 'Please enter a channel URL.';
+        return;
+    }
+
+    channelStatus.textContent = 'Fetching latest videos...';
+    channelResults.innerHTML = '';
+
+    const form = new FormData();
+    form.append('channel_url', channelUrl);
+
+    try {
+        const res = await fetch('/api/channel-latest', {
+            method: 'POST',
+            body: form
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            if (data.error === 'Unauthorized') {
+                window.location.href = '/';
+                return;
+            }
+            channelStatus.textContent = data.error;
+            return;
+        }
+
+        const videos = data.videos || [];
+        if (!videos.length) {
+            channelStatus.textContent = 'No videos found for this channel.';
+            return;
+        }
+
+        channelStatus.textContent = `${data.channel || 'Channel'} latest videos:`;
+        channelResults.innerHTML = videos.map((video, index) => `
+            <div class="channel-item">
+                <strong>${index + 1}.</strong>
+                <a href="${video.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.title)}</a>
+                <span style="color: var(--text-muted);"> • ${formatPublished(video.published)}</span>
+            </div>
+        `).join('');
+    } catch (err) {
+        channelStatus.textContent = `Failed to fetch videos: ${err.message}`;
+    }
 }
 
 // Copy URL to clipboard

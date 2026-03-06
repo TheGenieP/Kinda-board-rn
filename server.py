@@ -480,6 +480,54 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                 pass
 
 
+@app.post("/api/channel-latest")
+async def get_channel_latest_videos(channel_url: str = Form(...), session: str = Cookie(None)):
+    if not check_auth(session):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    normalized_url = channel_url.strip()
+    if not normalized_url:
+        return JSONResponse({"error": "Channel URL is required"}, status_code=400)
+
+    if "youtube.com" not in normalized_url and "youtu.be" not in normalized_url:
+        return JSONResponse({"error": "Please provide a valid YouTube channel URL"}, status_code=400)
+
+    if "/videos" not in normalized_url:
+        normalized_url = normalized_url.rstrip("/") + "/videos"
+
+    opts = {
+        "extract_flat": True,
+        "skip_download": True,
+        "playlistend": 10,
+        "quiet": True,
+        "no_warnings": True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(normalized_url, download=False)
+
+        entries = info.get("entries", []) if info else []
+        videos = []
+        for entry in entries[:10]:
+            video_id = entry.get("id")
+            if not video_id:
+                continue
+
+            videos.append({
+                "title": entry.get("title", "Untitled"),
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "published": entry.get("upload_date"),
+            })
+
+        return JSONResponse({
+            "channel": info.get("uploader") if info else None,
+            "videos": videos,
+        })
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to fetch channel videos: {str(e)}"}, status_code=500)
+
+
 @app.get("/api/file/{filename}")
 async def get_file(filename: str):
     path = os.path.join(DOWNLOAD_DIR, filename)
