@@ -139,10 +139,44 @@ def get_webshare_proxies():
     return []
 
 
+def normalize_proxy_url(proxy_value):
+    """Normalize proxy value to http://host:port if valid"""
+    if not proxy_value:
+        return None
+
+    raw = proxy_value.strip()
+    if not raw or any(ch.isspace() for ch in raw):
+        return None
+
+    if not raw.startswith(("http://", "https://")):
+        raw = f"http://{raw}"
+
+    if re.match(r"^https?://[^\s:@/]+(?::\d{2,5})$", raw):
+        return raw
+    return None
+
+
+def simplify_proxy_error(error_text):
+    """Return a short user-safe proxy error summary"""
+    text = (error_text or "unknown error").replace("\n", " ").strip()
+
+    if "402 Payment Required" in text:
+        return "proxy account payment required (402)"
+    if "InvalidURL" in text or "control characters" in text or "invalid api request" in text.lower():
+        return "proxy returned malformed request data"
+    if "Unable to connect to proxy" in text:
+        return "unable to connect to proxy"
+    if "Sign in to confirm" in text:
+        return "YouTube bot check still blocked request"
+
+    text = text.split("; please report this issue on", 1)[0]
+    return text[:220]
+
+
 def get_free_proxies():
     """Fetch and return a list of free proxies"""
     proxies = []
-    
+
     try:
         # ProxyScrape API
         response = requests.get(
@@ -151,10 +185,11 @@ def get_free_proxies():
         )
         if response.status_code == 200:
             proxy_list = response.text.strip().split('\n')
-            proxies.extend([f"http://{p.strip()}" for p in proxy_list if p.strip()])
+            normalized = [normalize_proxy_url(p) for p in proxy_list]
+            proxies.extend([p for p in normalized if p])
     except:
         pass
-    
+
     # Fallback static list of commonly working free proxies
     fallback_proxies = [
         "http://8.213.128.6:8080",
@@ -166,11 +201,11 @@ def get_free_proxies():
         "http://47.251.43.115:33333",
         "http://103.152.112.162:80",
     ]
-    
+
     if not proxies:
         proxies = fallback_proxies
-    
-    # Shuffle for random selection
+
+    proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
     return proxies[:20]  # Return max 20 proxies
 
@@ -450,10 +485,11 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                         print(f"✅ Successfully downloaded via {label} proxy")
                         return filename, None, payment_required
                     except Exception as proxy_error:
-                        last_error = str(proxy_error)
-                        if "402 Payment Required" in last_error:
+                        raw_error = str(proxy_error)
+                        last_error = simplify_proxy_error(raw_error)
+                        if "402 Payment Required" in raw_error:
                             payment_required = True
-                        print(f"❌ {label} proxy failed: {proxy_error}")
+                        print(f"❌ {label} proxy failed: {last_error}")
                         continue
 
                 return None, last_error, payment_required
