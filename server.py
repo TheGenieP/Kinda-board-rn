@@ -565,6 +565,34 @@ async def head_index():
     return Response(status_code=200)
 
 
+@app.post("/api/history/watch")
+async def add_watch_history_item(
+    url: str = Form(...),
+    title: str = Form("Video"),
+    source: str = Form("channel"),
+    session: str = Cookie(None)
+):
+    if not check_auth(session):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    history = load_history()
+    history_item = {
+        "id": str(uuid.uuid4()),
+        "url": url,
+        "timestamp": datetime.now().isoformat(),
+        "title": title[:120] if title else "Video",
+        "kind": "watch",
+        "source": source,
+    }
+    history.insert(0, history_item)
+
+    if len(history) > 50:
+        history = history[:50]
+
+    save_history_data(history)
+    return JSONResponse({"success": True, "id": history_item["id"]})
+
+
 @app.get("/api/history")
 async def get_history(session: str = Cookie(None)):
     if not check_auth(session):

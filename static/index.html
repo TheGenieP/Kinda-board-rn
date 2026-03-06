@@ -593,8 +593,15 @@ textarea {
         </div>
     </div>
 
+    <div id="youtubePlayer" style="display:none; background: var(--card-bg); padding: 30px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); border: 1px solid var(--border); margin-bottom: 30px; animation: fadeInUp 0.6s ease;">
+        <iframe id="youtubeFrame" width="100%" height="480" src="" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        <div class="video-controls">
+            <button onclick="hideYoutubePlayer()" class="btn btn-danger">✖️ Close YouTube Player</button>
+        </div>
+    </div>
+
     <div id="historyContainer">
-        <h3>📼 Download History</h3>
+        <h3>📼 Activity History</h3>
         <div id="historyList">
             <p class="empty-history">No videos downloaded yet. Start by pasting a URL above!</p>
         </div>
@@ -645,38 +652,59 @@ function renderHistory() {
     const historyList = document.getElementById('historyList');
     
     if (downloadHistory.length === 0) {
-        historyList.innerHTML = '<p class="empty-history">No videos downloaded yet</p>';
+        historyList.innerHTML = '<p class="empty-history">No activity yet</p>';
         return;
     }
-    
-    historyList.innerHTML = downloadHistory.map((item) => `
-        <div class="history-item">
-            <div class="history-info">
-                <div class="history-title">${escapeHtml(item.title)}</div>
-                <div class="history-url" onclick="copyToClipboard('${escapeHtml(item.url).replace(/'/g, "&#39;")}')" title="Click to copy URL">🔗 ${truncateUrl(item.url)}</div>
-                <div class="history-date">${formatDate(item.timestamp)}</div>
-            </div>
-            <div class="history-buttons">
-                <button onclick="playHistoryVideo('${item.file}')" class="btn-primary btn-small">▶️ Watch</button>
-                <div class="format-dropdown">
-                    <button onclick="toggleFormatMenu('${item.id}')" class="btn-secondary btn-small">⬇️ Download ▾</button>
-                    <div id="format-menu-${item.id}" class="format-menu">
-                        <div class="format-menu-section">VIDEO FORMATS</div>
-                        <button onclick="convertAndDownload('${item.filename}', 'mp4', '${item.id}')">MP4</button>
-                        <button onclick="convertAndDownload('${item.filename}', 'webm', '${item.id}')">WebM</button>
-                        <button onclick="convertAndDownload('${item.filename}', 'mkv', '${item.id}')">MKV</button>
-                        <button onclick="convertAndDownload('${item.filename}', 'avi', '${item.id}')">AVI</button>
-                        <div class="format-menu-section">AUDIO FORMATS</div>
-                        <button onclick="convertAndDownload('${item.filename}', 'mp3', '${item.id}')">MP3</button>
-                        <button onclick="convertAndDownload('${item.filename}', 'm4a', '${item.id}')">M4A</button>
-                        <button onclick="convertAndDownload('${item.filename}', 'wav', '${item.id}')">WAV</button>
-                        <button onclick="convertAndDownload('${item.filename}', 'flac', '${item.id}')">FLAC</button>
+
+    historyList.innerHTML = downloadHistory.map((item) => {
+        const isWatchItem = item.kind === 'watch';
+        const safeUrl = escapeHtml(item.url || '').replace(/'/g, '&#39;');
+
+        if (isWatchItem) {
+            return `
+                <div class="history-item">
+                    <div class="history-info">
+                        <div class="history-title">👀 ${escapeHtml(item.title)}</div>
+                        <div class="history-url" onclick="copyToClipboard('${safeUrl}')" title="Click to copy URL">🔗 ${truncateUrl(item.url || '')}</div>
+                        <div class="history-date">Watched • ${formatDate(item.timestamp)}</div>
+                    </div>
+                    <div class="history-buttons">
+                        <button onclick="watchChannelVideo('${safeUrl}', '${escapeHtml(item.title).replace(/'/g, '&#39;')}', false)" class="btn-primary btn-small">▶️ Watch</button>
+                        <button onclick="deleteHistoryItem('${item.id}')" class="btn-danger btn-small">🗑️</button>
                     </div>
                 </div>
-                <button onclick="deleteHistoryItem('${item.id}')" class="btn-danger btn-small">🗑️</button>
+            `;
+        }
+
+        return `
+            <div class="history-item">
+                <div class="history-info">
+                    <div class="history-title">${escapeHtml(item.title)}</div>
+                    <div class="history-url" onclick="copyToClipboard('${safeUrl}')" title="Click to copy URL">🔗 ${truncateUrl(item.url || '')}</div>
+                    <div class="history-date">${formatDate(item.timestamp)}</div>
+                </div>
+                <div class="history-buttons">
+                    <button onclick="playHistoryVideo('${item.file}')" class="btn-primary btn-small">▶️ Watch</button>
+                    <div class="format-dropdown">
+                        <button onclick="toggleFormatMenu('${item.id}')" class="btn-secondary btn-small">⬇️ Download ▾</button>
+                        <div id="format-menu-${item.id}" class="format-menu">
+                            <div class="format-menu-section">VIDEO FORMATS</div>
+                            <button onclick="convertAndDownload('${item.filename}', 'mp4', '${item.id}')">MP4</button>
+                            <button onclick="convertAndDownload('${item.filename}', 'webm', '${item.id}')">WebM</button>
+                            <button onclick="convertAndDownload('${item.filename}', 'mkv', '${item.id}')">MKV</button>
+                            <button onclick="convertAndDownload('${item.filename}', 'avi', '${item.id}')">AVI</button>
+                            <div class="format-menu-section">AUDIO FORMATS</div>
+                            <button onclick="convertAndDownload('${item.filename}', 'mp3', '${item.id}')">MP3</button>
+                            <button onclick="convertAndDownload('${item.filename}', 'm4a', '${item.id}')">M4A</button>
+                            <button onclick="convertAndDownload('${item.filename}', 'wav', '${item.id}')">WAV</button>
+                            <button onclick="convertAndDownload('${item.filename}', 'flac', '${item.id}')">FLAC</button>
+                        </div>
+                    </div>
+                    <button onclick="deleteHistoryItem('${item.id}')" class="btn-danger btn-small">🗑️</button>
+                </div>
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 // Truncate URL for display
@@ -707,6 +735,7 @@ function renderChannelVideos(videos, append = false) {
                 <span style="color: var(--text-muted);"> • ${formatPublished(video.published)}</span>
             </div>
             <div class="channel-item-actions">
+                <button onclick="watchChannelVideo('${video.url}', '${escapeHtml(video.title).replace(/'/g, "&#39;")}')" class="btn-primary btn-small">▶️ Watch</button>
                 <button onclick="downloadChannelVideo('${video.url}')" class="btn-secondary btn-small">⬇️ Download</button>
             </div>
         </div>
@@ -783,6 +812,58 @@ async function fetchChannelLatest(append = false) {
 
 async function loadMoreChannelVideos() {
     await fetchChannelLatest(true);
+}
+
+function extractYoutubeId(videoUrl) {
+    const regExp = /(?:v=|\/|be\/)([a-zA-Z0-9_-]{11})/;
+    const match = videoUrl.match(regExp);
+    return match ? match[1] : null;
+}
+
+async function addWatchHistory(videoUrl, title) {
+    const form = new FormData();
+    form.append('url', videoUrl);
+    form.append('title', title || 'Video');
+    form.append('source', 'channel');
+
+    await fetch('/api/history/watch', {
+        method: 'POST',
+        body: form
+    });
+}
+
+async function watchChannelVideo(videoUrl, title, shouldTrack = true) {
+    const videoId = extractYoutubeId(videoUrl);
+    const status = document.getElementById('channelStatus');
+    if (!videoId) {
+        status.textContent = 'Could not detect YouTube video ID for in-browser playback.';
+        return;
+    }
+
+    const videoPlayer = document.getElementById('videoPlayer');
+    const youtubePlayer = document.getElementById('youtubePlayer');
+    const youtubeFrame = document.getElementById('youtubeFrame');
+
+    videoPlayer.style.display = 'none';
+    youtubeFrame.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+    youtubePlayer.style.display = 'block';
+    youtubePlayer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    if (shouldTrack) {
+        try {
+            await addWatchHistory(videoUrl, title || 'Video');
+            await loadHistory();
+        } catch (err) {
+            console.error('Failed to save watch history', err);
+        }
+    }
+}
+
+function hideYoutubePlayer() {
+    const youtubePlayer = document.getElementById('youtubePlayer');
+    const youtubeFrame = document.getElementById('youtubeFrame');
+    youtubeFrame.src = '';
+    youtubePlayer.style.display = 'none';
 }
 
 async function downloadChannelVideo(videoUrl) {
@@ -1038,6 +1119,7 @@ async function start() {
 
 function playVideo() {
     if (!currentVideoFile) return;
+    hideYoutubePlayer();
     
     const videoPlayer = document.getElementById("videoPlayer");
     const videoSource = document.getElementById("videoSource");
@@ -1079,6 +1161,11 @@ window.addEventListener('beforeunload', () => {
     if (video) {
         video.pause();
         video.src = '';
+    }
+
+    const youtubeFrame = document.getElementById('youtubeFrame');
+    if (youtubeFrame) {
+        youtubeFrame.src = '';
     }
 });
 </script>
