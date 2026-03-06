@@ -459,7 +459,7 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                 return None, last_error, payment_required
 
             # You can prioritize free proxies with PREFER_FREE_PROXIES=true
-            prefer_free_proxies = os.getenv("PREFER_FREE_PROXIES", "false").lower() in ["1", "true", "yes"]
+            prefer_free_proxies = os.getenv("PREFER_FREE_PROXIES", "true").lower() in ["1", "true", "yes"]
 
             webshare_proxies = get_webshare_proxies()
             free_proxies = get_free_proxies()
@@ -487,13 +487,13 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                 else:
                     last_free_error = last_error
 
-            if webshare_payment_required:
+            if webshare_payment_required and not free_proxies:
                 return JSONResponse({
-                    "error": "YouTube blocked and Webshare returned 402 Payment Required. Tip: set PREFER_FREE_PROXIES=true to try free proxies first, or remove WEBSHARE_API_KEY to skip paid proxies, then retry with cookies for best reliability."
+                    "error": "YouTube blocked and Webshare returned 402 Payment Required. No free proxies were available. Recommendation: remove WEBSHARE_API_KEY, add cookies, or try again later."
                 }, status_code=500)
 
             if webshare_proxies:
-                return JSONResponse({"error": f"YouTube blocked. Tried Webshare + free proxies. Last Webshare error: {last_webshare_error}. Last free proxy error: {last_free_error}. Recommendation: Use cookies for 100% success."}, status_code=500)
+                return JSONResponse({"error": f"YouTube blocked. Tried free + Webshare proxies. Last free proxy error: {last_free_error}. Last Webshare error: {last_webshare_error}. Recommendation: Use cookies for 100% success."}, status_code=500)
 
             return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error}. Recommendation: Configure cookies for best success."}, status_code=500)
         
