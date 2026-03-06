@@ -406,68 +406,78 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
     except Exception as e:
         error_msg = str(e)
         
-        # If bot detection and it's a YouTube URL, try Webshare proxies only
+        # If bot detection and it's a YouTube URL, try proxy fallback strategies
         if ("Sign in to confirm" in error_msg or "bot" in error_msg.lower()) and "youtube.com" in url:
-            # Extract video ID
-            video_id_match = re.search(r'(?:v=|/)([a-zA-Z0-9_-]{11})', url)
-            if video_id_match:
-                video_id = video_id_match.group(1)
-                
-                # Try Webshare proxies (if API key set)
-                webshare_proxies = get_webshare_proxies()
-                last_webshare_error = None
-                
-                if webshare_proxies:
-                    print(f"🔄 Attempting download with {len(webshare_proxies)} Webshare proxies...")
-                    for proxy in webshare_proxies:
-                        try:
-                            print(f"🔄 Trying Webshare proxy: {proxy.split('@')[1] if '@' in proxy else proxy}")
-                            
-                            # Copy original opts and add proxy
-                            opts_proxy = opts.copy()
-                            opts_proxy["proxy"] = proxy
-                            opts_proxy["socket_timeout"] = 20
-                            
-                            with yt_dlp.YoutubeDL(opts_proxy) as ydl:
-                                info = ydl.extract_info(url, download=True)
-                            
-                            # Find downloaded file
-                            downloaded_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_id}.*"))
-                            if not downloaded_files:
-                                raise Exception("File not created after proxy download")
-                            
-                            filename = os.path.basename(downloaded_files[0])
-                            
-                            # Add to history
-                            history = load_history()
-                            history_item = {
-                                "id": file_id,
-                                "url": url,
-                                "file": f"/api/file/{filename}",
-                                "filename": filename,
-                                "timestamp": datetime.now().isoformat(),
-                                "title": extract_title_from_info(info)
-                            }
-                            history.insert(0, history_item)
-                            
-                            if len(history) > 50:
-                                history = history[:50]
-                            
-                            save_history_data(history)
-                            
-                            print(f"✅ Successfully downloaded via Webshare proxy")
-                            return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
-                            
-                        except Exception as proxy_error:
-                            last_webshare_error = str(proxy_error)
-                            print(f"❌ Webshare proxy failed: {proxy_error}")
-                            continue
-                
-                # All strategies failed
-                if webshare_proxies:
-                    return JSONResponse({"error": f"YouTube blocked. Tried {len(webshare_proxies)} Webshare proxies. Last error: {last_webshare_error}. Recommendation: Use cookies for 100% success."}, status_code=500)
-                else:
-                    return JSONResponse({"error": f"YouTube blocked. No Webshare API key configured. Recommendation: Add WEBSHARE_API_KEY or use cookies for 100% success."}, status_code=500)
+            def try_download_with_proxies(proxy_list, label):
+                last_error = None
+                payment_required = False
+
+                if not proxy_list:
+                    return None, None, payment_required
+
+                print(f"🔄 Attempting download with {len(proxy_list)} {label} proxies...")
+                for proxy in proxy_list:
+                    try:
+                        print(f"🔄 Trying {label} proxy: {proxy.split('@')[1] if '@' in proxy else proxy}")
+
+                        opts_proxy = opts.copy()
+                        opts_proxy["proxy"] = proxy
+                        opts_proxy["socket_timeout"] = 20
+
+                        with yt_dlp.YoutubeDL(opts_proxy) as ydl:
+                            info = ydl.extract_info(url, download=True)
+
+                        downloaded_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_id}.*"))
+                        if not downloaded_files:
+                            raise Exception("File not created after proxy download")
+
+                        filename = os.path.basename(downloaded_files[0])
+                        history = load_history()
+                        history_item = {
+                            "id": file_id,
+                            "url": url,
+                            "file": f"/api/file/{filename}",
+                            "filename": filename,
+                            "timestamp": datetime.now().isoformat(),
+                            "title": extract_title_from_info(info)
+                        }
+                        history.insert(0, history_item)
+
+                        if len(history) > 50:
+                            history = history[:50]
+
+                        save_history_data(history)
+                        print(f"✅ Successfully downloaded via {label} proxy")
+                        return filename, None, payment_required
+                    except Exception as proxy_error:
+                        last_error = str(proxy_error)
+                        if "402 Payment Required" in last_error:
+                            payment_required = True
+                        print(f"❌ {label} proxy failed: {proxy_error}")
+                        continue
+
+                return None, last_error, payment_required
+
+            webshare_proxies = get_webshare_proxies()
+            filename, last_webshare_error, webshare_payment_required = try_download_with_proxies(webshare_proxies, "Webshare")
+            if filename:
+                return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
+
+            # Fallback to free proxies if Webshare fails (or if not configured)
+            free_proxies = get_free_proxies()
+            filename, last_free_error, _ = try_download_with_proxies(free_proxies, "free")
+            if filename:
+                return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
+
+            if webshare_payment_required:
+                return JSONResponse({
+                    "error": "YouTube blocked and Webshare returned 402 Payment Required. Please top up your Webshare plan or remove WEBSHARE_API_KEY to skip paid proxies, then retry with cookies for best reliability."
+                }, status_code=500)
+
+            if webshare_proxies:
+                return JSONResponse({"error": f"YouTube blocked. Tried Webshare + free proxies. Last Webshare error: {last_webshare_error}. Last free proxy error: {last_free_error}. Recommendation: Use cookies for 100% success."}, status_code=500)
+
+            return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error}. Recommendation: Configure cookies for best success."}, status_code=500)
         
         return JSONResponse({"error": f"{error_msg}. For YouTube, try providing cookies."}, status_code=500)
     
