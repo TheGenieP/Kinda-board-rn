@@ -442,7 +442,7 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
         error_msg = str(e)
         
         # If bot detection and it's a YouTube URL, try proxy fallback strategies
-        if ("Sign in to confirm" in error_msg or "bot" in error_msg.lower()) and "youtube.com" in url:
+        if ("Sign in to confirm" in error_msg or "bot" in error_msg.lower()) and ("youtube.com" in url or "youtu.be" in url):
             def try_download_with_proxies(proxy_list, label):
                 last_error = None
                 payment_required = False
@@ -528,12 +528,15 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                     "error": "YouTube blocked and Webshare returned 402 Payment Required. No free proxies were available. Recommendation: remove WEBSHARE_API_KEY, add cookies, or try again later."
                 }, status_code=500)
 
-            if webshare_proxies:
-                return JSONResponse({"error": f"YouTube blocked. Tried free + Webshare proxies. Last free proxy error: {last_free_error}. Last Webshare error: {last_webshare_error}. Recommendation: Use cookies for 100% success."}, status_code=500)
+            last_free_error = simplify_proxy_error(last_free_error)
+            last_webshare_error = simplify_proxy_error(last_webshare_error)
 
-            return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error}. Recommendation: Configure cookies for best success."}, status_code=500)
-        
-        return JSONResponse({"error": f"{error_msg}. For YouTube, try providing cookies."}, status_code=500)
+            if webshare_proxies:
+                return JSONResponse({"error": f"YouTube blocked. Tried free + Webshare proxies. Last free proxy error: {last_free_error or 'none'}. Last Webshare error: {last_webshare_error or 'none'}. Recommendation: Use cookies for highest success."}, status_code=500)
+
+            return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error or 'none'}. Recommendation: Use cookies for highest success."}, status_code=500)
+
+        return JSONResponse({"error": f"{simplify_proxy_error(error_msg)}. For YouTube, try providing cookies."}, status_code=500)
     
     finally:
         # Clean up cookies file
