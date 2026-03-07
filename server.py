@@ -173,22 +173,46 @@ def simplify_proxy_error(error_text):
     return text[:220]
 
 
-def get_free_proxies():
-    """Fetch and return a list of free proxies"""
-    proxies = []
+def get_proxyscrape_proxies():
+    """Fetch proxies from ProxyScrape (supports optional API key)."""
+    api_key = os.getenv("PROXYSCRAPE_API_KEY")
+
+    base_url = "https://api.proxyscrape.com/v2/"
+    params = {
+        "protocol": "http",
+        "timeout": "10000",
+        "country": "all",
+        "ssl": "all",
+        "anonymity": "all",
+    }
+
+    # Paid/official endpoint when key is provided; free endpoint otherwise.
+    if api_key:
+        params["request"] = "displayproxies"
+        params["apikey"] = api_key
+    else:
+        params["request"] = "get"
 
     try:
-        # ProxyScrape API
-        response = requests.get(
-            "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-            timeout=10
-        )
-        if response.status_code == 200:
-            proxy_list = response.text.strip().split('\n')
+        response = requests.get(base_url, params=params, timeout=10)
+        if response.status_code == 200 and response.text:
+            proxy_list = response.text.strip().split("\n")
             normalized = [normalize_proxy_url(p) for p in proxy_list]
-            proxies.extend([p for p in normalized if p])
-    except:
-        pass
+            proxies = [p for p in normalized if p]
+            if proxies:
+                print(f"✅ Fetched {len(proxies)} proxies from ProxyScrape")
+                return proxies
+        else:
+            print(f"⚠️ ProxyScrape returned status {response.status_code}")
+    except Exception as e:
+        print(f"❌ ProxyScrape error: {e}")
+
+    return []
+
+
+def get_free_proxies():
+    """Fetch and return a list of free proxies"""
+    proxies = get_proxyscrape_proxies()
 
     # Fallback static list of commonly working free proxies
     fallback_proxies = [
