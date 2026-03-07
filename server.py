@@ -23,6 +23,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # Load credentials from Render Secret File
 SECRETS_FILE = "/etc/secrets/credentials"
+PROXYSCRAPE_KEY_FILE = "/etc/secrets/proxyscrape_api_key"
 
 def load_credentials():
     """Load credentials from Render secret file"""
@@ -139,22 +140,100 @@ def get_webshare_proxies():
     return []
 
 
+def normalize_proxy_url(proxy_value):
+    """Normalize proxy value to http://host:port if valid"""
+    if not proxy_value:
+        return None
+
+    raw = proxy_value.strip()
+    if not raw or any(ch.isspace() for ch in raw):
+        return None
+
+    if not raw.startswith(("http://", "https://")):
+        raw = f"http://{raw}"
+
+    if re.match(r"^https?://[^\s:@/]+(?::\d{2,5})$", raw):
+        return raw
+    return None
+
+
+def simplify_proxy_error(error_text):
+    """Return a short user-safe proxy error summary"""
+    text = (error_text or "unknown error").replace("\n", " ").strip()
+
+    if "402 Payment Required" in text:
+        return "proxy account payment required (402)"
+    if "InvalidURL" in text or "control characters" in text or "invalid api request" in text.lower():
+        return "proxy returned malformed request data"
+    if "Unable to connect to proxy" in text:
+        return "unable to connect to proxy"
+    if "Sign in to confirm" in text:
+        return "YouTube bot check still blocked request"
+
+    text = text.split("; please report this issue on", 1)[0]
+    return text[:220]
+
+
+def load_proxyscrape_api_key():
+    """Load ProxyScrape API key from env first, then optional secret file."""
+    env_key = os.getenv("PROXYSCRAPE_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+
+    try:
+        if os.path.exists(PROXYSCRAPE_KEY_FILE):
+            with open(PROXYSCRAPE_KEY_FILE, "r") as f:
+                file_key = f.read().strip()
+                if file_key:
+                    print("✅ Loaded ProxyScrape API key from secret file")
+                    return file_key
+    except Exception as e:
+        print(f"⚠️ Could not read ProxyScrape secret file: {e}")
+
+    return None
+
+
+def get_proxyscrape_proxies():
+    """Fetch proxies from ProxyScrape (supports optional API key)."""
+    api_key = load_proxyscrape_api_key()
+
+    base_url = "https://api.proxyscrape.com/v2/"
+    params = {
+        "protocol": "http",
+        "timeout": "10000",
+        "country": "all",
+        "ssl": "all",
+        "anonymity": "all",
+    }
+
+    # Paid/official endpoint when key is provided; free endpoint otherwise.
+    if api_key:
+        params["request"] = "displayproxies"
+        params["apikey"] = api_key
+    else:
+        params["request"] = "get"
+
+    try:
+        response = requests.get(base_url, params=params, timeout=10)
+        if response.status_code == 200 and response.text:
+            proxy_list = response.text.strip().split("\n")
+            normalized = [normalize_proxy_url(p) for p in proxy_list]
+            proxies = [p for p in normalized if p]
+            if proxies:
+                print(f"✅ Fetched {len(proxies)} proxies from ProxyScrape")
+                return proxies
+        else:
+            print(f"⚠️ ProxyScrape returned status {response.status_code}")
+    except Exception as e:
+        print(f"❌ ProxyScrape error: {e}")
+
+    return []
+
+
 def get_free_proxies():
     """Fetch and return a list of free proxies"""
-    proxies = []
-    
-    try:
-        # ProxyScrape API
-        response = requests.get(
-            "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-            timeout=10
-        )
-        if response.status_code == 200:
-            proxy_list = response.text.strip().split('\n')
-            proxies.extend([f"http://{p.strip()}" for p in proxy_list if p.strip()])
-    except:
-        pass
-    
+    proxies = get_proxyscrape_proxies()
+
     # Fallback static list of commonly working free proxies
     fallback_proxies = [
         "http://8.213.128.6:8080",
@@ -166,11 +245,11 @@ def get_free_proxies():
         "http://47.251.43.115:33333",
         "http://103.152.112.162:80",
     ]
-    
+
     if not proxies:
         proxies = fallback_proxies
-    
-    # Shuffle for random selection
+
+    proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
     return proxies[:20]  # Return max 20 proxies
 
@@ -352,6 +431,9 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
     if cookies_file:
         opts["cookiefile"] = cookies_file
 
+    # Prevent long network stalls
+    opts["socket_timeout"] = 20
+
     # Try direct YouTube download first
     try:
         print(f"🎬 Starting download with format: {format}")
@@ -406,70 +488,109 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
     except Exception as e:
         error_msg = str(e)
         
-        # If bot detection and it's a YouTube URL, try Webshare proxies only
-        if ("Sign in to confirm" in error_msg or "bot" in error_msg.lower()) and "youtube.com" in url:
-            # Extract video ID
-            video_id_match = re.search(r'(?:v=|/)([a-zA-Z0-9_-]{11})', url)
-            if video_id_match:
-                video_id = video_id_match.group(1)
-                
-                # Try Webshare proxies (if API key set)
-                webshare_proxies = get_webshare_proxies()
-                last_webshare_error = None
-                
-                if webshare_proxies:
-                    print(f"🔄 Attempting download with {len(webshare_proxies)} Webshare proxies...")
-                    for proxy in webshare_proxies:
-                        try:
-                            print(f"🔄 Trying Webshare proxy: {proxy.split('@')[1] if '@' in proxy else proxy}")
-                            
-                            # Copy original opts and add proxy
-                            opts_proxy = opts.copy()
-                            opts_proxy["proxy"] = proxy
-                            opts_proxy["socket_timeout"] = 20
-                            
-                            with yt_dlp.YoutubeDL(opts_proxy) as ydl:
-                                info = ydl.extract_info(url, download=True)
-                            
-                            # Find downloaded file
-                            downloaded_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_id}.*"))
-                            if not downloaded_files:
-                                raise Exception("File not created after proxy download")
-                            
-                            filename = os.path.basename(downloaded_files[0])
-                            
-                            # Add to history
-                            history = load_history()
-                            history_item = {
-                                "id": file_id,
-                                "url": url,
-                                "file": f"/api/file/{filename}",
-                                "filename": filename,
-                                "timestamp": datetime.now().isoformat(),
-                                "title": extract_title_from_info(info)
-                            }
-                            history.insert(0, history_item)
-                            
-                            if len(history) > 50:
-                                history = history[:50]
-                            
-                            save_history_data(history)
-                            
-                            print(f"✅ Successfully downloaded via Webshare proxy")
-                            return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
-                            
-                        except Exception as proxy_error:
-                            last_webshare_error = str(proxy_error)
-                            print(f"❌ Webshare proxy failed: {proxy_error}")
-                            continue
-                
-                # All strategies failed
-                if webshare_proxies:
-                    return JSONResponse({"error": f"YouTube blocked. Tried {len(webshare_proxies)} Webshare proxies. Last error: {last_webshare_error}. Recommendation: Use cookies for 100% success."}, status_code=500)
+        # If bot detection and it's a YouTube URL, try proxy fallback strategies
+        if ("Sign in to confirm" in error_msg or "bot" in error_msg.lower()) and ("youtube.com" in url or "youtu.be" in url):
+            def try_download_with_proxies(proxy_list, label):
+                last_error = None
+                payment_required = False
+
+                if not proxy_list:
+                    return None, None, payment_required
+
+                try:
+                    max_proxy_attempts = int(os.getenv("MAX_PROXY_ATTEMPTS", "5"))
+                except ValueError:
+                    max_proxy_attempts = 5
+                max_proxy_attempts = max(1, min(max_proxy_attempts, 20))
+                proxies_to_try = proxy_list[:max_proxy_attempts]
+
+                print(f"🔄 Attempting download with {len(proxies_to_try)} of {len(proxy_list)} {label} proxies...")
+                for proxy in proxies_to_try:
+                    try:
+                        print(f"🔄 Trying {label} proxy: {proxy.split('@')[1] if '@' in proxy else proxy}")
+
+                        opts_proxy = opts.copy()
+                        opts_proxy["proxy"] = proxy
+                        opts_proxy["socket_timeout"] = 20
+
+                        with yt_dlp.YoutubeDL(opts_proxy) as ydl:
+                            info = ydl.extract_info(url, download=True)
+
+                        downloaded_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{file_id}.*"))
+                        if not downloaded_files:
+                            raise Exception("File not created after proxy download")
+
+                        filename = os.path.basename(downloaded_files[0])
+                        history = load_history()
+                        history_item = {
+                            "id": file_id,
+                            "url": url,
+                            "file": f"/api/file/{filename}",
+                            "filename": filename,
+                            "timestamp": datetime.now().isoformat(),
+                            "title": extract_title_from_info(info)
+                        }
+                        history.insert(0, history_item)
+
+                        if len(history) > 50:
+                            history = history[:50]
+
+                        save_history_data(history)
+                        print(f"✅ Successfully downloaded via {label} proxy")
+                        return filename, None, payment_required
+                    except Exception as proxy_error:
+                        raw_error = str(proxy_error)
+                        last_error = simplify_proxy_error(raw_error)
+                        if "402 Payment Required" in raw_error:
+                            payment_required = True
+                        print(f"❌ {label} proxy failed: {last_error}")
+                        continue
+
+                return None, last_error, payment_required
+
+            # You can prioritize free proxies with PREFER_FREE_PROXIES=true
+            prefer_free_proxies = os.getenv("PREFER_FREE_PROXIES", "true").lower() in ["1", "true", "yes"]
+
+            webshare_proxies = get_webshare_proxies()
+            free_proxies = get_free_proxies()
+
+            last_webshare_error = None
+            last_free_error = None
+            webshare_payment_required = False
+
+            proxy_plan = [
+                ("free", free_proxies),
+                ("Webshare", webshare_proxies),
+            ] if prefer_free_proxies else [
+                ("Webshare", webshare_proxies),
+                ("free", free_proxies),
+            ]
+
+            for label, proxy_list in proxy_plan:
+                filename, last_error, payment_required = try_download_with_proxies(proxy_list, label)
+                if filename:
+                    return JSONResponse({"file": f"/api/file/{filename}", "id": file_id})
+
+                if label == "Webshare":
+                    last_webshare_error = last_error
+                    webshare_payment_required = payment_required
                 else:
-                    return JSONResponse({"error": f"YouTube blocked. No Webshare API key configured. Recommendation: Add WEBSHARE_API_KEY or use cookies for 100% success."}, status_code=500)
-        
-        return JSONResponse({"error": f"{error_msg}. For YouTube, try providing cookies."}, status_code=500)
+                    last_free_error = last_error
+
+            if webshare_payment_required and not free_proxies:
+                return JSONResponse({
+                    "error": "YouTube blocked and Webshare returned 402 Payment Required. No free proxies were available. Recommendation: remove WEBSHARE_API_KEY, add cookies, or try again later."
+                }, status_code=500)
+
+            last_free_error = simplify_proxy_error(last_free_error)
+            last_webshare_error = simplify_proxy_error(last_webshare_error)
+
+            if webshare_proxies:
+                return JSONResponse({"error": f"YouTube blocked. Tried free + Webshare proxies. Last free proxy error: {last_free_error or 'none'}. Last Webshare error: {last_webshare_error or 'none'}. Recommendation: Use cookies for highest success."}, status_code=500)
+
+            return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error or 'none'}. Recommendation: Use cookies for highest success."}, status_code=500)
+
+        return JSONResponse({"error": f"{simplify_proxy_error(error_msg)}. For YouTube, try providing cookies."}, status_code=500)
     
     finally:
         # Clean up cookies file
@@ -478,6 +599,69 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                 os.remove(cookies_file)
             except:
                 pass
+
+
+@app.post("/api/channel-latest")
+async def get_channel_latest_videos(
+    channel_url: str = Form(...),
+    limit: int = Form(10),
+    offset: int = Form(0),
+    session: str = Cookie(None)
+):
+    if not check_auth(session):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    normalized_url = channel_url.strip()
+    if not normalized_url:
+        return JSONResponse({"error": "Channel URL is required"}, status_code=400)
+
+    if "youtube.com" not in normalized_url and "youtu.be" not in normalized_url:
+        return JSONResponse({"error": "Please provide a valid YouTube channel URL"}, status_code=400)
+
+    if "/videos" not in normalized_url:
+        normalized_url = normalized_url.rstrip("/") + "/videos"
+
+    # Keep queries bounded so users can progressively load more without huge requests
+    safe_limit = max(1, min(limit, 25))
+    safe_offset = max(0, offset)
+
+    opts = {
+        "extract_flat": True,
+        "skip_download": True,
+        "playliststart": safe_offset + 1,
+        "playlistend": safe_offset + safe_limit,
+        "quiet": True,
+        "no_warnings": True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(normalized_url, download=False)
+
+        entries = info.get("entries", []) if info else []
+        videos = []
+        for entry in entries:
+            video_id = entry.get("id")
+            if not video_id:
+                continue
+
+            videos.append({
+                "title": entry.get("title", "Untitled"),
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "published": entry.get("upload_date"),
+                "id": video_id,
+            })
+
+        return JSONResponse({
+            "channel": info.get("uploader") if info else None,
+            "videos": videos,
+            "offset": safe_offset,
+            "limit": safe_limit,
+            "has_more": len(videos) == safe_limit,
+            "next_offset": safe_offset + len(videos),
+        })
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to fetch channel videos: {str(e)}"}, status_code=500)
 
 
 @app.get("/api/file/{filename}")
@@ -500,6 +684,34 @@ async def index(session: str = Cookie(None)):
 @app.head("/")
 async def head_index():
     return Response(status_code=200)
+
+
+@app.post("/api/history/watch")
+async def add_watch_history_item(
+    url: str = Form(...),
+    title: str = Form("Video"),
+    source: str = Form("channel"),
+    session: str = Cookie(None)
+):
+    if not check_auth(session):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    history = load_history()
+    history_item = {
+        "id": str(uuid.uuid4()),
+        "url": url,
+        "timestamp": datetime.now().isoformat(),
+        "title": title[:120] if title else "Video",
+        "kind": "watch",
+        "source": source,
+    }
+    history.insert(0, history_item)
+
+    if len(history) > 50:
+        history = history[:50]
+
+    save_history_data(history)
+    return JSONResponse({"success": True, "id": history_item["id"]})
 
 
 @app.get("/api/history")

@@ -43,6 +43,17 @@ If no secret file is configured:
 
 ⚠️ **Change these for production using Render Secret Files!**
 
+### ProxyScrape Setup (Optional)
+
+You can use ProxyScrape as your primary proxy source for YouTube fallback.
+
+- Set environment variable: `PROXYSCRAPE_API_KEY=<your_key>` **or** add a Render Secret File at `/etc/secrets/proxyscrape_api_key` containing only the key.
+- If neither is set, the app still uses ProxyScrape's free endpoint automatically.
+
+Optional controls:
+- `PREFER_FREE_PROXIES=true` (default) to try free/ProxyScrape proxies before Webshare
+- `MAX_PROXY_ATTEMPTS=5` to cap retries per proxy source
+
 ## Installation
 
 ```bash
