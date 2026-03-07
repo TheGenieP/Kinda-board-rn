@@ -1071,12 +1071,18 @@ async function start() {
     form.append("cookies", cookies);
     form.append("format", format);
 
+    const controller = new AbortController();
+    const timeoutMs = 90000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
         const res = await fetch("/api/download", {
             method: "POST",
-            body: form
+            body: form,
+            signal: controller.signal
         });
 
+        clearTimeout(timeoutId);
         const data = await res.json();
 
         if (data.error) {
@@ -1112,7 +1118,12 @@ async function start() {
             `;
         }
 
-    } catch {
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            status.textContent = "Request timed out. Try adding cookies or try a different video.";
+            return;
+        }
         status.textContent = "Request failed";
     }
 }

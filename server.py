@@ -387,6 +387,9 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
     if cookies_file:
         opts["cookiefile"] = cookies_file
 
+    # Prevent long network stalls
+    opts["socket_timeout"] = 20
+
     # Try direct YouTube download first
     try:
         print(f"🎬 Starting download with format: {format}")
@@ -450,8 +453,15 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                 if not proxy_list:
                     return None, None, payment_required
 
-                print(f"🔄 Attempting download with {len(proxy_list)} {label} proxies...")
-                for proxy in proxy_list:
+                try:
+                    max_proxy_attempts = int(os.getenv("MAX_PROXY_ATTEMPTS", "5"))
+                except ValueError:
+                    max_proxy_attempts = 5
+                max_proxy_attempts = max(1, min(max_proxy_attempts, 20))
+                proxies_to_try = proxy_list[:max_proxy_attempts]
+
+                print(f"🔄 Attempting download with {len(proxies_to_try)} of {len(proxy_list)} {label} proxies...")
+                for proxy in proxies_to_try:
                     try:
                         print(f"🔄 Trying {label} proxy: {proxy.split('@')[1] if '@' in proxy else proxy}")
 
