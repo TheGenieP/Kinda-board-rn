@@ -1083,7 +1083,25 @@ async function start() {
         });
 
         clearTimeout(timeoutId);
-        const data = await res.json();
+
+        const rawBody = await res.text();
+        let data = {};
+        try {
+            data = rawBody ? JSON.parse(rawBody) : {};
+        } catch {
+            data = {};
+        }
+
+        if (!res.ok) {
+            if (res.status === 401 || data.error === "Unauthorized") {
+                window.location.href = "/";
+                return;
+            }
+
+            const fallbackError = data.error || rawBody || `Request failed (${res.status})`;
+            status.textContent = fallbackError;
+            return;
+        }
 
         if (data.error) {
             if (data.error === "Unauthorized") {
@@ -1124,7 +1142,7 @@ async function start() {
             status.textContent = "Request timed out. Try adding cookies or try a different video.";
             return;
         }
-        status.textContent = "Request failed";
+        status.textContent = `Request failed: ${err.message || 'Unknown network error'}`;
     }
 }
 
