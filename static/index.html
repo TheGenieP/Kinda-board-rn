@@ -715,6 +715,13 @@ function truncateUrl(url) {
     return url;
 }
 
+function getDownloadTimeoutMs() {
+    const ua = navigator.userAgent || '';
+    const isIPad = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    // iPad/Safari downloads can take longer before first byte, especially with proxy fallback.
+    return isIPad ? 240000 : 120000;
+}
+
 function getFriendlyNetworkError(err, fallback = 'Request failed') {
     const message = (err && err.message ? err.message : '').toLowerCase();
 
@@ -1083,7 +1090,7 @@ async function start() {
     form.append("format", format);
 
     const controller = new AbortController();
-    const timeoutMs = 90000;
+    const timeoutMs = getDownloadTimeoutMs();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
@@ -1150,7 +1157,7 @@ async function start() {
     } catch (err) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') {
-            status.textContent = "Request timed out. Try adding cookies or try a different video.";
+            status.textContent = "Request timed out on iPad/Safari. Keep the tab open, then retry with cookies for best success.";
             return;
         }
         status.textContent = getFriendlyNetworkError(err, 'Request failed');
