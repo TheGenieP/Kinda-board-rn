@@ -48,10 +48,11 @@ If no secret file is configured:
 You can use ProxyScrape as your primary proxy source for YouTube fallback.
 
 - Set environment variable: `PROXYSCRAPE_API_KEY=<your_key>` **or** add a Render Secret File at `/etc/secrets/proxyscrape_api_key` containing only the key.
-- If neither is set, the app uses multiple free sources (ProxyScrape + GeoNode) automatically.
+- If neither is set, the app uses multiple free sources (ProxyScrape + GeoNode + Proxy-List.download) automatically.
 
 Optional controls:
-- `PREFER_FREE_PROXIES=true` (default) to try free/ProxyScrape proxies before Webshare
+- If YouTube keeps blocking, open the video in CroxyProxy and export fresh YouTube cookies into the app.
+- `PREFER_FREE_PROXIES=true` (default) to try free proxies (ProxyScrape/GeoNode/Proxy-List.download) before Webshare
 - `MAX_PROXY_ATTEMPTS=5` to cap retries per proxy source
 
 ## Installation

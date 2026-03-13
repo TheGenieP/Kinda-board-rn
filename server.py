@@ -264,11 +264,37 @@ def get_geonode_proxies():
 
     return []
 
+
+def get_proxylist_download_proxies():
+    """Fetch additional free proxies from Proxy-List.download."""
+    url = "https://www.proxy-list.download/api/v1/get"
+    params = {
+        "type": "http",
+        "anon": "elite",
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200 and response.text:
+            proxy_list = response.text.strip().split("\n")
+            normalized = [normalize_proxy_url(p) for p in proxy_list]
+            proxies = [p for p in normalized if p]
+            if proxies:
+                print(f"✅ Fetched {len(proxies)} proxies from Proxy-List.download")
+                return proxies
+        else:
+            print(f"⚠️ Proxy-List.download returned status {response.status_code}")
+    except Exception as e:
+        print(f"❌ Proxy-List.download error: {e}")
+
+    return []
+
 def get_free_proxies():
     """Fetch and return a list of free proxies"""
     proxies = []
     proxies.extend(get_proxyscrape_proxies())
     proxies.extend(get_geonode_proxies())
+    proxies.extend(get_proxylist_download_proxies())
 
     # Fallback static list of commonly working free proxies
     fallback_proxies = [

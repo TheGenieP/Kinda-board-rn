@@ -727,10 +727,27 @@ function getFriendlyNetworkError(err, fallback = 'Request failed') {
 
     // iPad Safari commonly reports generic "Load failed" on network/proxy interruptions.
     if (message.includes('load failed') || message.includes('failed to fetch') || message.includes('networkerror')) {
-        return 'Network request failed (iPad/Safari). Please refresh and try again. If it keeps failing, add cookies and retry.';
+        return 'Network request failed (iPad/Safari). Refresh and retry. If it keeps failing, add cookies, then try again. You can also try opening the video in CroxyProxy and export fresh cookies.';
     }
 
     return `${fallback}: ${err && err.message ? err.message : 'Unknown network error'}`;
+}
+
+function isLikelyTransientNetworkError(err) {
+    const message = (err && err.message ? err.message : '').toLowerCase();
+    return message.includes('load failed') || message.includes('failed to fetch') || message.includes('networkerror');
+}
+
+async function fetchWithSingleRetry(url, options = {}) {
+    try {
+        return await fetch(url, options);
+    } catch (err) {
+        if (!isLikelyTransientNetworkError(err)) {
+            throw err;
+        }
+        await new Promise(resolve => setTimeout(resolve, 700));
+        return fetch(url, options);
+    }
 }
 
 function formatPublished(uploadDate) {
@@ -792,7 +809,7 @@ async function fetchChannelLatest(append = false) {
     form.append('offset', channelOffset);
 
     try {
-        const res = await fetch('/api/channel-latest', {
+        const res = await fetchWithSingleRetry('/api/channel-latest', {
             method: 'POST',
             body: form
         });
@@ -897,7 +914,7 @@ async function downloadChannelVideo(videoUrl) {
     form.append('format', format);
 
     try {
-        const res = await fetch('/api/download', {
+        const res = await fetchWithSingleRetry('/api/download', {
             method: 'POST',
             body: form
         });
@@ -1094,7 +1111,7 @@ async function start() {
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const res = await fetch("/api/download", {
+        const res = await fetchWithSingleRetry("/api/download", {
             method: "POST",
             body: form,
             signal: controller.signal
@@ -1157,7 +1174,7 @@ async function start() {
     } catch (err) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') {
-            status.textContent = "Request timed out on iPad/Safari. Keep the tab open, then retry with cookies for best success.";
+            status.textContent = "Request timed out on iPad/Safari. Keep this tab open and retry with cookies. If needed, open the video in CroxyProxy and export fresh cookies.";
             return;
         }
         status.textContent = getFriendlyNetworkError(err, 'Request failed');
