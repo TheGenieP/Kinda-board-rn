@@ -24,7 +24,10 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Load credentials from Render Secret File
 SECRETS_FILE = "/etc/secrets/credentials"
 PROXYSCRAPE_KEY_FILE = "/etc/secrets/proxyscrape_api_key"
-SECONDARY_DOWNLOADER_API = os.getenv("SECONDARY_DOWNLOADER_API", "").strip()
+SECONDARY_DOWNLOADER_API = (
+    os.getenv("SECONDARY_DOWNLOADER_API", "").strip()
+    or os.getenv("YOUTUBE_VIDEO_DOWNLOADER_API_URL", "").strip()
+)
 
 def load_credentials():
     """Load credentials from Render secret file"""
@@ -358,6 +361,7 @@ def try_secondary_downloader_api(video_url, requested_format, file_id):
         return None, "secondary downloader not configured", None
 
     base = SECONDARY_DOWNLOADER_API.rstrip("/")
+    print(f"🔁 Trying secondary downloader API: {base}")
     attempts = [
         ("POST", f"{base}/api/download", {"json": {"url": video_url, "format": requested_format}}),
         ("POST", f"{base}/download", {"json": {"url": video_url, "format": requested_format}}),
