@@ -54,6 +54,7 @@ Optional controls:
 - If YouTube keeps blocking, open the video in CroxyProxy and export fresh YouTube cookies into the app.
 - `PREFER_FREE_PROXIES=true` (default) to try free proxies (ProxyScrape/GeoNode/Proxy-List.download) before Webshare
 - `MAX_PROXY_ATTEMPTS=5` to cap retries per proxy source
+- `SECONDARY_DOWNLOADER_API=https://<your-deployed-youtube-video-downloader-api>` to attempt a secondary service after yt-dlp + proxies fail
 
 ## Installation
 

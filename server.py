@@ -24,6 +24,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Load credentials from Render Secret File
 SECRETS_FILE = "/etc/secrets/credentials"
 PROXYSCRAPE_KEY_FILE = "/etc/secrets/proxyscrape_api_key"
+SECONDARY_DOWNLOADER_API = os.getenv("SECONDARY_DOWNLOADER_API", "").strip()
 
 def load_credentials():
     """Load credentials from Render secret file"""
@@ -314,6 +315,109 @@ def get_free_proxies():
     proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
     return proxies[:40]  # Return more proxies for better fallback odds
+
+
+def find_download_url_in_payload(payload):
+    """Try to discover a download URL in a nested JSON payload."""
+    if isinstance(payload, str):
+        return payload if payload.startswith(("http://", "https://")) else None
+
+    if isinstance(payload, list):
+        for item in payload:
+            found = find_download_url_in_payload(item)
+            if found:
+                return found
+        return None
+
+    if isinstance(payload, dict):
+        for key in ["download_url", "downloadUrl", "video_url", "videoUrl", "url", "link", "file"]:
+            value = payload.get(key)
+            found = find_download_url_in_payload(value)
+            if found:
+                return found
+
+        for value in payload.values():
+            found = find_download_url_in_payload(value)
+            if found:
+                return found
+
+    return None
+
+
+def get_extension_from_url(download_url, fallback_ext):
+    path = download_url.split("?", 1)[0]
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if re.match(r"^[a-z0-9]{2,5}$", ext):
+        return ext
+    return fallback_ext
+
+
+def try_secondary_downloader_api(video_url, requested_format, file_id):
+    """Fallback downloader using a secondary API service if configured."""
+    if not SECONDARY_DOWNLOADER_API:
+        return None, "secondary downloader not configured", None
+
+    base = SECONDARY_DOWNLOADER_API.rstrip("/")
+    attempts = [
+        ("POST", f"{base}/api/download", {"json": {"url": video_url, "format": requested_format}}),
+        ("POST", f"{base}/download", {"json": {"url": video_url, "format": requested_format}}),
+        ("GET", f"{base}/api/download", {"params": {"url": video_url, "format": requested_format}}),
+        ("GET", f"{base}/download", {"params": {"url": video_url, "format": requested_format}}),
+    ]
+
+    last_error = "secondary downloader did not return a valid file URL"
+
+    for method, endpoint, extra in attempts:
+        try:
+            response = requests.request(method, endpoint, timeout=20, **extra)
+            if response.status_code >= 400:
+                body = response.text[:180].replace("\n", " ") if response.text else ""
+                last_error = f"secondary API {response.status_code}: {body or 'request failed'}"
+                continue
+
+            payload = None
+            title = None
+            if "application/json" in (response.headers.get("content-type", "")).lower():
+                payload = response.json()
+                if isinstance(payload, dict):
+                    title = payload.get("title")
+            else:
+                try:
+                    payload = response.json()
+                    if isinstance(payload, dict):
+                        title = payload.get("title")
+                except Exception:
+                    payload = response.text.strip()
+
+            download_url = find_download_url_in_payload(payload)
+            if not download_url:
+                last_error = "secondary downloader returned no download URL"
+                continue
+
+            file_response = requests.get(download_url, stream=True, timeout=30)
+            if file_response.status_code >= 400:
+                last_error = f"secondary file download failed with HTTP {file_response.status_code}"
+                continue
+
+            audio_formats = ['mp3', 'm4a', 'wav', 'flac', 'aac', 'opus', 'vorbis']
+            default_ext = requested_format if requested_format in audio_formats else "mp4"
+            ext = get_extension_from_url(download_url, default_ext)
+            filename = f"{file_id}.{ext}"
+            file_path = os.path.join(DOWNLOAD_DIR, filename)
+
+            with open(file_path, "wb") as out:
+                for chunk in file_response.iter_content(chunk_size=8192):
+                    if chunk:
+                        out.write(chunk)
+
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                return filename, None, title
+
+            last_error = "secondary downloader created an empty file"
+        except Exception as e:
+            last_error = str(e)
+
+    return None, simplify_proxy_error(last_error), None
 
 
 def extract_title_from_info(info):
@@ -644,13 +748,33 @@ async def download_video(url: str = Form(...), cookies: str = Form(""), format: 
                     "error": "YouTube blocked and Webshare returned 402 Payment Required. No free proxies were available. Recommendation: remove WEBSHARE_API_KEY, add cookies, or try again later."
                 }, status_code=500)
 
+            secondary_filename, secondary_error, secondary_title = try_secondary_downloader_api(url, format, file_id)
+            if secondary_filename:
+                history = load_history()
+                history_item = {
+                    "id": file_id,
+                    "url": url,
+                    "file": f"/api/file/{secondary_filename}",
+                    "filename": secondary_filename,
+                    "timestamp": datetime.now().isoformat(),
+                    "title": (secondary_title or "Video")[:100]
+                }
+                history.insert(0, history_item)
+                if len(history) > 50:
+                    history = history[:50]
+                save_history_data(history)
+                print("✅ Successfully downloaded via secondary downloader API")
+                return JSONResponse({"file": f"/api/file/{secondary_filename}", "id": file_id})
+
+            print(f"⚠️ Secondary downloader API fallback failed: {secondary_error}")
+
             last_free_error = simplify_proxy_error(last_free_error)
             last_webshare_error = simplify_proxy_error(last_webshare_error)
 
             if webshare_proxies:
-                return JSONResponse({"error": f"YouTube blocked. Tried free + Webshare proxies. Last free proxy error: {last_free_error or 'none'}. Last Webshare error: {last_webshare_error or 'none'}. Recommendation: Use cookies for highest success."}, status_code=500)
+                return JSONResponse({"error": f"YouTube blocked. Tried free + Webshare proxies. Last free proxy error: {last_free_error or 'none'}. Last Webshare error: {last_webshare_error or 'none'}. Recommendation: Use cookies for highest success. If configured, secondary downloader API was also attempted."}, status_code=500)
 
-            return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error or 'none'}. Recommendation: Use cookies for highest success."}, status_code=500)
+            return JSONResponse({"error": f"YouTube blocked. Tried free proxies. Last error: {last_free_error or 'none'}. Recommendation: Use cookies for highest success. If configured, secondary downloader API was also attempted."}, status_code=500)
 
         return JSONResponse({"error": f"{simplify_proxy_error(error_msg)}. For YouTube, try providing cookies."}, status_code=500)
     
