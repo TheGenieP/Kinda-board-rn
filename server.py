@@ -230,9 +230,45 @@ def get_proxyscrape_proxies():
     return []
 
 
+
+
+def get_geonode_proxies():
+    """Fetch additional free proxies from GeoNode API."""
+    url = "https://proxylist.geonode.com/api/proxy-list"
+    params = {
+        "limit": 100,
+        "page": 1,
+        "sort_by": "lastChecked",
+        "sort_type": "desc",
+        "protocols": "http,https",
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            proxies = []
+            for item in data.get("data", []):
+                host = item.get("ip")
+                port = item.get("port")
+                proxy = normalize_proxy_url(f"{host}:{port}" if host and port else None)
+                if proxy:
+                    proxies.append(proxy)
+            if proxies:
+                print(f"✅ Fetched {len(proxies)} proxies from GeoNode")
+                return proxies
+        else:
+            print(f"⚠️ GeoNode returned status {response.status_code}")
+    except Exception as e:
+        print(f"❌ GeoNode error: {e}")
+
+    return []
+
 def get_free_proxies():
     """Fetch and return a list of free proxies"""
-    proxies = get_proxyscrape_proxies()
+    proxies = []
+    proxies.extend(get_proxyscrape_proxies())
+    proxies.extend(get_geonode_proxies())
 
     # Fallback static list of commonly working free proxies
     fallback_proxies = [
@@ -251,7 +287,7 @@ def get_free_proxies():
 
     proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
-    return proxies[:20]  # Return max 20 proxies
+    return proxies[:40]  # Return more proxies for better fallback odds
 
 
 def extract_title_from_info(info):
